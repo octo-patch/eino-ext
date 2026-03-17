@@ -777,3 +777,55 @@ func TestExecuteStreaming(t *testing.T) {
 		assert.Less(t, elapsed, 2*time.Second, "background command should return immediately without waiting")
 	})
 }
+
+func TestExecute(t *testing.T) {
+	ctx := context.Background()
+	s, err := NewBackend(ctx, &Config{})
+	assert.NoError(t, err)
+
+	t.Run("simple echo", func(t *testing.T) {
+		resp, err := s.Execute(ctx, &filesystem.ExecuteRequest{Command: "echo hello"})
+		assert.NoError(t, err)
+		assert.Equal(t, "hello\n", resp.Output)
+		assert.NotNil(t, resp.ExitCode)
+		assert.Equal(t, 0, *resp.ExitCode)
+	})
+
+	t.Run("multi-line output", func(t *testing.T) {
+		resp, err := s.Execute(ctx, &filesystem.ExecuteRequest{Command: "echo line1 && echo line2 && echo line3"})
+		assert.NoError(t, err)
+		assert.Equal(t, "line1\nline2\nline3\n", resp.Output)
+		assert.Equal(t, 0, *resp.ExitCode)
+	})
+
+	t.Run("empty command", func(t *testing.T) {
+		_, err := s.Execute(ctx, &filesystem.ExecuteRequest{Command: ""})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "command is required")
+	})
+
+	t.Run("non-zero exit code", func(t *testing.T) {
+		_, err := s.Execute(ctx, &filesystem.ExecuteRequest{Command: "exit 1"})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "non-zero code")
+	})
+
+	t.Run("non-zero exit code with stderr", func(t *testing.T) {
+		_, err := s.Execute(ctx, &filesystem.ExecuteRequest{Command: "echo fail >&2 && exit 2"})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "non-zero code 2")
+		assert.Contains(t, err.Error(), "fail")
+	})
+
+	t.Run("command not found", func(t *testing.T) {
+		_, err := s.Execute(ctx, &filesystem.ExecuteRequest{Command: "nonexistent_command_xyz"})
+		assert.Error(t, err)
+	})
+
+	t.Run("context cancellation", func(t *testing.T) {
+		cancelCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err := s.Execute(cancelCtx, &filesystem.ExecuteRequest{Command: "sleep 10"})
+		assert.Error(t, err)
+	})
+}
